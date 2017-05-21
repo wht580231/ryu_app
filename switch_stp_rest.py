@@ -20,6 +20,8 @@ url = '/simpleswitch/mactable/{dpid}'
 
 class SimpleSwitchRest13(simple_switch_13.SimpleSwitch13):
     OFP_VERSION = [ofproto_v1_3.OFP_VERSION]
+
+    #该应用运行之前首先加载的两个依赖
     _CONTEXTS = {'wsgi': WSGIApplication,'stplib':stplib.Stp}
 
 
@@ -29,7 +31,8 @@ class SimpleSwitchRest13(simple_switch_13.SimpleSwitch13):
         wsgi = kwargs['wsgi']
         self.stp = kwargs['stplib']
 
-         config = {dpid_lib.str_to_dpid('0000000000000001'):
+        #通过set_config设定dpid=1的交换机为默认的root switch,也设置dpid为2,3的priority
+        config = {dpid_lib.str_to_dpid('0000000000000001'):
                   {'bridge': {'priority': 0x8000}},
                   dpid_lib.str_to_dpid('0000000000000002'):
                   {'bridge': {'priority': 0x9000}},
@@ -37,6 +40,7 @@ class SimpleSwitchRest13(simple_switch_13.SimpleSwitch13):
                   {'bridge': {'priority': 0xa000}}}
         self.stp.set_config(config)
 
+        #用register函数注册WSGIApplication（SimpleSwitchController），为了让simple_switch_instance_name的实例能够访问SimpleSwitchController的构造函数
         wsgi.register(SimpleSwitchController,
                       {simple_switch_instance_name: self})
 
@@ -52,6 +56,8 @@ class SimpleSwitchRest13(simple_switch_13.SimpleSwitch13):
                 priority=1, match=match)
             datapath.send_msg(mod)
 
+
+    #  MAC地址学习
     @set_ev_cls(stplib.EventPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
@@ -94,6 +100,8 @@ class SimpleSwitchRest13(simple_switch_13.SimpleSwitch13):
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
+
+    #当拓扑改变的时候要删除已经注册的流表项以及初始化已经学习的MAC地址表，然后重新STP计算root switch和端口角色
     @set_ev_cls(stplib.EventTopologyChange, MAIN_DISPATCHER)
     def _topology_change_handler(self, ev):
         dp = ev.dp
@@ -150,13 +158,15 @@ class SimpleSwitchRest13(simple_switch_13.SimpleSwitch13):
                 mac_table.update({entry_mac: entry_port})
         return mac_table
 
-
+# WSGIApplication
 class SimpleSwitchController(ControllerBase):
 
     def __init__(self, req, link, data, **config):
         super(SimpleSwitchController, self).__init__(req, link, data, **config)
         self.simple_switch_app = data[simple_switch_instance_name]
 
+
+    #用route装饰器将url和该handler绑定在一起
     @route('simpleswitch', url, methods=['GET'],
            requirements={'dpid': dpid_lib.DPID_PATTERN})
     def list_mac_table(self, req, **kwargs):
@@ -171,6 +181,8 @@ class SimpleSwitchController(ControllerBase):
         body = json.dumps(mac_table)
         return Response(content_type='application/json', body=body)
 
+
+    #添加新的switch，调用set_mac_to_port更新Mac表
     @route('simpleswitch', url, methods=['PUT'],
            requirements={'dpid': dpid_lib.DPID_PATTERN})
     def put_mac_table(self, req, **kwargs):
